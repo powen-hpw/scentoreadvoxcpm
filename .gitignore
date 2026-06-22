@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# Runtime artifacts
+models/
+output/
+request_logs/
+
+# macOS
+.DS_Store

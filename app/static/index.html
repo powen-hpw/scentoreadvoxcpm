@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VoxCPM Workbench</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">Taiwanese TTS Workbench</p>
+        <h1>VoxCPM2 Runtime Console</h1>
+        <p class="intro">
+          Generate Taiwanese TTS, compare runs, and inspect timing for each
+          stage of the request.
+        </p>
+      </section>
+
+      <section class="layout">
+        <article class="panel form-panel">
+          <div class="panel-heading">
+            <h2>Generate</h2>
+            <p>輸入文字、調整主要參數，直接看模型速度與輸出效果。</p>
+          </div>
+
+          <form id="generate-form">
+            <label class="field">
+              <span>Text / 輸入文字</span>
+              <textarea
+                id="text"
+                name="text"
+                rows="6"
+                placeholder="輸入要合成的文字"
+              ></textarea>
+              <small class="field-help">
+                建議先測 1 到 3 句，方便比較品質與速度。
+              </small>
+            </label>
+
+            <div class="voice-panel">
+              <div class="voice-panel-heading">
+                <h3>Voice Design / 聲音描述</h3>
+                <p>這些欄位會自動組成描述 prompt，並記錄到 run history。</p>
+              </div>
+
+              <div class="grid">
+                <label class="field">
+                  <span>Gender / 性別感</span>
+                  <select id="voice_gender" name="voice_gender">
+                    <option value="">不指定</option>
+                    <option value="female voice">女性</option>
+                    <option value="male voice">男性</option>
+                    <option value="androgynous voice">中性</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>Age / 年齡感</span>
+                  <select id="voice_age" name="voice_age">
+                    <option value="">不指定</option>
+                    <option value="young">年輕</option>
+                    <option value="adult">成熟</option>
+                    <option value="middle-aged">中年</option>
+                    <option value="elderly">年長</option>
+                    <option value="childlike">童聲感</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>Tone / 態度情緒</span>
+                  <select id="voice_tone" name="voice_tone">
+                    <option value="">不指定</option>
+                    <option value="warm and gentle">溫柔</option>
+                    <option value="cheerful and bright">開朗</option>
+                    <option value="calm and steady">平穩</option>
+                    <option value="patient and caring">耐心</option>
+                    <option value="serious and composed">沉穩正式</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>Pace / 速度感</span>
+                  <select id="voice_pace" name="voice_pace">
+                    <option value="">不指定</option>
+                    <option value="slow pace">慢</option>
+                    <option value="slightly slow pace">稍慢</option>
+                    <option value="natural pace">自然</option>
+                    <option value="slightly faster pace">稍快</option>
+                  </select>
+                </label>
+              </div>
+
+              <label class="field">
+                <span>Extra Description / 補充描述</span>
+                <input
+                  id="voice_extra"
+                  name="voice_extra"
+                  type="text"
+                  placeholder="例如：slightly smiling, clear diction, suitable for bedtime stories"
+                />
+              </label>
+            </div>
+
+            <div class="grid">
+              <label class="field">
+                <span>Device / 執行裝置</span>
+                <select id="device" name="device">
+                  <option value="auto">auto</option>
+                  <option value="cuda">cuda</option>
+                  <option value="mps">mps</option>
+                  <option value="cpu">cpu</option>
+                </select>
+                <small class="field-help">
+                  建議：雲端 GPU 用 <code>cuda</code>，本機 Apple Silicon 用 <code>mps</code>。
+                </small>
+              </label>
+
+              <label class="field">
+                <span>CFG Value / 控制強度</span>
+                <input
+                  id="cfg_value"
+                  name="cfg_value"
+                  type="number"
+                  min="0.1"
+                  max="10"
+                  step="0.1"
+                />
+                <small class="field-help">
+                  建議範圍：1.5 到 3.0；建議先從 <code>2.0</code> 開始。
+                </small>
+              </label>
+
+              <label class="field">
+                <span>Inference Timesteps / 推理步數</span>
+                <input
+                  id="inference_timesteps"
+                  name="inference_timesteps"
+                  type="number"
+                  min="1"
+                  max="200"
+                  step="1"
+                />
+                <small class="field-help">
+                  建議範圍：8 到 20；建議先從 <code>10</code> 開始。
+                </small>
+              </label>
+
+              <label class="field checkbox-field">
+                <input id="optimize" name="optimize" type="checkbox" />
+                <span>Optimize / 編譯優化</span>
+                <small class="field-help checkbox-help">
+                  啟用後可能讓後續推理更快，但第一次初始化可能更慢。
+                </small>
+              </label>
+            </div>
+
+            <div class="actions">
+              <button id="generate-button" type="submit">Generate WAV / 產生音檔</button>
+            </div>
+          </form>
+
+          <div id="status-card" class="status-card idle">
+            <p class="status-label">Status / 狀態</p>
+            <p id="status-text">Ready.</p>
+          </div>
+        </article>
+
+        <article class="panel history-panel">
+          <div class="panel-heading">
+            <h2>Run History / 歷史紀錄</h2>
+            <p>新的請求會排最前面。每筆都可直接播放音檔，並查看 timing。</p>
+          </div>
+
+          <div id="history-empty" class="empty-state">
+            No runs yet. Generate a sample to start building a comparison log.
+          </div>
+          <div id="history-list" class="history-list"></div>
+        </article>
+      </section>
+    </main>
+
+    <template id="history-item-template">
+      <article class="history-item">
+        <div class="history-item-header">
+          <div>
+            <h3 class="history-title"></h3>
+            <p class="history-meta"></p>
+          </div>
+          <a class="log-link" target="_blank" rel="noreferrer">View Log</a>
+        </div>
+
+        <p class="history-text"></p>
+        <div class="pill-row"></div>
+        <audio class="audio-player" controls preload="metadata"></audio>
+
+        <details class="timing-details">
+          <summary>Timing Details</summary>
+          <div class="timing-grid"></div>
+        </details>
+
+        <div class="live-status"></div>
+      </article>
+    </template>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
