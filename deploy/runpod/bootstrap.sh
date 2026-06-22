@@ -20,14 +20,15 @@ source "$VENV_DIR/bin/activate"
 
 echo "[3/5] Installing Python dependencies"
 python -m pip install --upgrade pip
-python -m pip install -r "$ROOT_DIR/requirements.txt"
+python -m pip install -r "$ROOT_DIR/requirements-gpu-cu128.txt" --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r "$ROOT_DIR/requirements-app.txt"
 
 echo "[4/5] Ensuring model directory exists: $MODEL_DIR"
 mkdir -p "$MODEL_DIR"
 
 if [ ! -f "$MODEL_DIR/model.safetensors" ]; then
   echo "[5/5] Downloading model weights from Hugging Face: $MODEL_ID"
-  python -m huggingface_hub download "$MODEL_ID" --local-dir "$MODEL_DIR"
+  HF_HUB_ENABLE_HF_TRANSFER=0 huggingface-cli download "$MODEL_ID" --local-dir "$MODEL_DIR"
 else
   echo "[5/5] Model weights already exist, skipping download"
 fi

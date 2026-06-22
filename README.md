@@ -40,8 +40,9 @@ cd voxcpm-workbench
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m huggingface_hub download openbmb/VoxCPM2 --local-dir models/VoxCPM2
+python -m pip install -r requirements-gpu-cu128.txt --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements-app.txt
+huggingface-cli download openbmb/VoxCPM2 --local-dir models/VoxCPM2
 python -m uvicorn app.server:app --host 127.0.0.1 --port 8000
 ```
 
@@ -71,3 +72,9 @@ Generate a single WAV file without starting the web UI:
 ```bash
 python smoke_test.py --device auto
 ```
+
+## Dependency layout
+
+- `requirements-gpu-cu128.txt`: CUDA 12.8 compatible `torch` and `torchaudio`
+- `requirements-app.txt`: workbench and VoxCPM application dependencies
+- `requirements.txt`: compatibility wrapper pointing at app dependencies only

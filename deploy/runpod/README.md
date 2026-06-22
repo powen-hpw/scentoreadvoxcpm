@@ -19,6 +19,14 @@ cd /workspace/voxcpm-workbench
 bash deploy/runpod/bootstrap.sh
 ```
 
+The bootstrap script now installs dependencies in two phases:
+
+1. `requirements-gpu-cu128.txt`
+   This pins `torch` and `torchaudio` to CUDA 12.8 compatible builds.
+2. `requirements-app.txt`
+   This installs the workbench and VoxCPM application dependencies without
+   overriding the GPU-compatible PyTorch install.
+
 ## Start the service
 
 If the Pod template already exposes port `8888`, start the service there:
