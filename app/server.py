@@ -40,6 +40,58 @@ DEFAULT_TEXT = os.environ.get(
 )
 DEFAULT_DEVICE = os.environ.get("VOXCPM_DEFAULT_DEVICE", "auto")
 MAX_REFERENCE_VOICES = 5
+DEFAULT_CFG_VALUE = 2.0
+DEFAULT_INFERENCE_TIMESTEPS = 10
+DEFAULT_RETRY_BADCASE = True
+DEFAULT_RETRY_BADCASE_MAX_TIMES = 3
+DEFAULT_RETRY_BADCASE_RATIO_THRESHOLD = 6.0
+DEFAULT_MIN_LEN = 1
+DEFAULT_MAX_LEN = 4096
+
+PARAMETER_LIMITS = {
+    "cfg_value": {
+        "min": 0.1,
+        "max": 10.0,
+        "step": 0.1,
+        "default": DEFAULT_CFG_VALUE,
+        "recommended": "1.5 to 3.0",
+    },
+    "inference_timesteps": {
+        "min": 1,
+        "max": 200,
+        "step": 1,
+        "default": DEFAULT_INFERENCE_TIMESTEPS,
+        "recommended": "8 to 20",
+    },
+    "retry_badcase_max_times": {
+        "min": 0,
+        "max": 10,
+        "step": 1,
+        "default": DEFAULT_RETRY_BADCASE_MAX_TIMES,
+        "recommended": "2 to 4",
+    },
+    "retry_badcase_ratio_threshold": {
+        "min": 1.0,
+        "max": 20.0,
+        "step": 0.1,
+        "default": DEFAULT_RETRY_BADCASE_RATIO_THRESHOLD,
+        "recommended": "4.0 to 8.0",
+    },
+    "min_len": {
+        "min": 1,
+        "max": 10000,
+        "step": 1,
+        "default": DEFAULT_MIN_LEN,
+        "recommended": "1 to 32",
+    },
+    "max_len": {
+        "min": 1,
+        "max": 10000,
+        "step": 1,
+        "default": DEFAULT_MAX_LEN,
+        "recommended": "512 to 4096",
+    },
+}
 
 
 for directory in (OUTPUT_DIR, LOG_DIR, STATIC_DIR, REFERENCE_VOICE_DIR):
@@ -66,15 +118,15 @@ class GenerateRequest(BaseModel):
     voice_extra: str = Field(default="", max_length=240)
     reference_voice_id: str = Field(default="", max_length=200)
     device: str = Field(default=DEFAULT_DEVICE, pattern="^(auto|mps|cpu|cuda)$")
-    cfg_value: float = Field(default=2.0, ge=0.1, le=10.0)
-    inference_timesteps: int = Field(default=10, ge=1, le=200)
+    cfg_value: float = Field(default=DEFAULT_CFG_VALUE, ge=0.1, le=10.0)
+    inference_timesteps: int = Field(default=DEFAULT_INFERENCE_TIMESTEPS, ge=1, le=200)
     normalize: bool = Field(default=False)
     denoise: bool = Field(default=False)
-    retry_badcase: bool = Field(default=True)
-    retry_badcase_max_times: int = Field(default=3, ge=0, le=10)
-    retry_badcase_ratio_threshold: float = Field(default=6.0, ge=1.0, le=20.0)
-    min_len: int | None = Field(default=None, ge=1, le=10000)
-    max_len: int | None = Field(default=None, ge=1, le=10000)
+    retry_badcase: bool = Field(default=DEFAULT_RETRY_BADCASE)
+    retry_badcase_max_times: int = Field(default=DEFAULT_RETRY_BADCASE_MAX_TIMES, ge=0, le=10)
+    retry_badcase_ratio_threshold: float = Field(default=DEFAULT_RETRY_BADCASE_RATIO_THRESHOLD, ge=1.0, le=20.0)
+    min_len: int = Field(default=DEFAULT_MIN_LEN, ge=1, le=10000)
+    max_len: int = Field(default=DEFAULT_MAX_LEN, ge=1, le=10000)
     optimize: bool = Field(default=False)
 
 
@@ -216,6 +268,18 @@ def resolve_reference_voice(voice_id: str) -> tuple[str | None, str | None]:
     return str(path), label
 
 
+def sanitize_payload(payload: GenerateRequest) -> GenerateRequest:
+    """Normalize incoming values and block invalid parameter combinations."""
+
+    data = payload.model_dump()
+    if data["max_len"] < data["min_len"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Max Len must be greater than or equal to Min Len.",
+        )
+    return GenerateRequest(**data)
+
+
 workbench = VoxWorkbench()
 app = FastAPI(title="VoxCPM Workbench")
 app.add_middleware(
@@ -258,17 +322,18 @@ def defaults() -> dict[str, Any]:
         "voice_extra": "",
         "reference_voice_id": "",
         "device": DEFAULT_DEVICE,
-        "cfg_value": 2.0,
-        "inference_timesteps": 10,
+        "cfg_value": DEFAULT_CFG_VALUE,
+        "inference_timesteps": DEFAULT_INFERENCE_TIMESTEPS,
         "normalize": False,
         "denoise": False,
-        "retry_badcase": True,
-        "retry_badcase_max_times": 3,
-        "retry_badcase_ratio_threshold": 6.0,
-        "min_len": None,
-        "max_len": None,
+        "retry_badcase": DEFAULT_RETRY_BADCASE,
+        "retry_badcase_max_times": DEFAULT_RETRY_BADCASE_MAX_TIMES,
+        "retry_badcase_ratio_threshold": DEFAULT_RETRY_BADCASE_RATIO_THRESHOLD,
+        "min_len": DEFAULT_MIN_LEN,
+        "max_len": DEFAULT_MAX_LEN,
         "optimize": False,
         "model_path": str(MODEL_DIR),
+        "parameter_limits": PARAMETER_LIMITS,
         "reference_voices": [item.model_dump() for item in list_reference_voices()],
         "notes": [
             "First request on a new device/optimize combination is usually slower.",
@@ -326,6 +391,8 @@ async def upload_reference_voice(
 @app.post("/api/generate", response_model=GenerateResponse)
 def generate(payload: GenerateRequest) -> GenerateResponse:
     """Generate one WAV file and store a structured timing log."""
+
+    payload = sanitize_payload(payload)
 
     request_id = datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
     audio_path = OUTPUT_DIR / f"{request_id}.wav"

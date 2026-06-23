@@ -224,22 +224,34 @@
 
                 <label class="field">
                   <span>Retry Max Times / 最大重試次數</span>
-                  <input id="retry_badcase_max_times" name="retry_badcase_max_times" type="number" min="0" max="10" step="1" />
+                  <input id="retry_badcase_max_times" name="retry_badcase_max_times" type="number" min="0" max="10" step="1" required />
+                  <small class="field-help">
+                    下限 0，上限 10，建議範圍 2 到 4。保留 <code>3</code> 通常最穩。
+                  </small>
                 </label>
 
                 <label class="field">
                   <span>Retry Ratio Threshold / 長度判定比率</span>
-                  <input id="retry_badcase_ratio_threshold" name="retry_badcase_ratio_threshold" type="number" min="1" max="20" step="0.1" />
+                  <input id="retry_badcase_ratio_threshold" name="retry_badcase_ratio_threshold" type="number" min="1" max="20" step="0.1" required />
+                  <small class="field-help">
+                    下限 1，上限 20，建議範圍 4.0 到 8.0。數值越高越寬鬆。
+                  </small>
                 </label>
 
                 <label class="field">
                   <span>Min Len / 最短 token 長度</span>
-                  <input id="min_len" name="min_len" type="number" min="1" max="10000" step="1" placeholder="留空使用預設" />
+                  <input id="min_len" name="min_len" type="number" min="1" max="10000" step="1" required />
+                  <small class="field-help">
+                    下限 1，上限 10000，建議範圍 1 到 32。預設 <code>1</code>。
+                  </small>
                 </label>
 
                 <label class="field">
                   <span>Max Len / 最長 token 長度</span>
-                  <input id="max_len" name="max_len" type="number" min="1" max="10000" step="1" placeholder="留空使用預設" />
+                  <input id="max_len" name="max_len" type="number" min="1" max="10000" step="1" required />
+                  <small class="field-help">
+                    下限 1，上限 10000，建議範圍 512 到 4096。預設 <code>4096</code>，且不可小於 Min Len。
+                  </small>
                 </label>
               </div>
             </details>

@@ -12,6 +12,7 @@ const template = document.getElementById("history-item-template");
 const pendingRuns = new Map();
 let lastHistoryItems = [];
 let referenceVoices = [];
+let parameterLimits = {};
 
 function setStatus(kind, message) {
   statusCard.className = `status-card ${kind}`;
@@ -98,7 +99,14 @@ function buildHistoryNode(item) {
   ].forEach(([name, value]) => timingGrid.appendChild(createTimingRow(name, value)));
 
   const liveStatus = fragment.querySelector(".live-status");
-  liveStatus.innerHTML = `<span class="status-badge success">success</span>`;
+  if (item.success === false) {
+    liveStatus.innerHTML = `
+      <span class="status-badge error">failed</span>
+      <span class="live-elapsed">${item.error || "Generation failed."}</span>
+    `;
+  } else {
+    liveStatus.innerHTML = `<span class="status-badge success">success</span>`;
+  }
 
   return fragment;
 }
@@ -156,6 +164,12 @@ function buildPendingNode(run) {
   statusRow.className = "timing-row";
   statusRow.innerHTML = `<span>status</span><strong>${run.status}</strong>`;
   timingGrid.prepend(statusRow);
+  if (run.error) {
+    const errorRow = document.createElement("div");
+    errorRow.className = "timing-row error-row";
+    errorRow.innerHTML = `<span>error</span><strong>${run.error}</strong>`;
+    timingGrid.appendChild(errorRow);
+  }
 
   const liveStatus = fragment.querySelector(".live-status");
   liveStatus.innerHTML = `
@@ -259,9 +273,42 @@ function renderReferenceVoices(items) {
   }
 }
 
+function applyNumberConstraints(fieldId, spec) {
+  const input = document.getElementById(fieldId);
+  if (!input || !spec) return;
+  input.min = spec.min;
+  input.max = spec.max;
+  input.step = spec.step;
+  input.value = spec.default;
+}
+
+function validatePayload(payload) {
+  if (!payload.text) {
+    return "Text is required.";
+  }
+
+  if (payload.max_len < payload.min_len) {
+    return "Max Len must be greater than or equal to Min Len.";
+  }
+
+  for (const [name, spec] of Object.entries(parameterLimits)) {
+    if (!(name in payload)) continue;
+    const value = payload[name];
+    if (typeof value !== "number" || Number.isNaN(value)) {
+      return `${name} must be a valid number.`;
+    }
+    if (value < spec.min || value > spec.max) {
+      return `${name} must stay between ${spec.min} and ${spec.max}.`;
+    }
+  }
+
+  return null;
+}
+
 async function loadDefaults() {
   const response = await fetch("/api/defaults");
   const defaults = await response.json();
+  parameterLimits = defaults.parameter_limits || {};
   document.getElementById("text").value = defaults.text;
   document.getElementById("voice_gender").value = defaults.voice_gender;
   document.getElementById("voice_age").value = defaults.voice_age;
@@ -269,18 +316,30 @@ async function loadDefaults() {
   document.getElementById("voice_pace").value = defaults.voice_pace;
   document.getElementById("voice_extra").value = defaults.voice_extra;
   document.getElementById("device").value = defaults.device;
+  applyNumberConstraints("cfg_value", parameterLimits.cfg_value);
   document.getElementById("cfg_value").value = defaults.cfg_value;
-  document.getElementById("inference_timesteps").value =
-    defaults.inference_timesteps;
+  applyNumberConstraints(
+    "inference_timesteps",
+    parameterLimits.inference_timesteps
+  );
+  document.getElementById("inference_timesteps").value = defaults.inference_timesteps;
   document.getElementById("normalize").checked = defaults.normalize;
   document.getElementById("denoise").checked = defaults.denoise;
   document.getElementById("retry_badcase").checked = defaults.retry_badcase;
-  document.getElementById("retry_badcase_max_times").value =
-    defaults.retry_badcase_max_times;
-  document.getElementById("retry_badcase_ratio_threshold").value =
-    defaults.retry_badcase_ratio_threshold;
-  document.getElementById("min_len").value = defaults.min_len ?? "";
-  document.getElementById("max_len").value = defaults.max_len ?? "";
+  applyNumberConstraints(
+    "retry_badcase_max_times",
+    parameterLimits.retry_badcase_max_times
+  );
+  document.getElementById("retry_badcase_max_times").value = defaults.retry_badcase_max_times;
+  applyNumberConstraints(
+    "retry_badcase_ratio_threshold",
+    parameterLimits.retry_badcase_ratio_threshold
+  );
+  document.getElementById("retry_badcase_ratio_threshold").value = defaults.retry_badcase_ratio_threshold;
+  applyNumberConstraints("min_len", parameterLimits.min_len);
+  document.getElementById("min_len").value = defaults.min_len;
+  applyNumberConstraints("max_len", parameterLimits.max_len);
+  document.getElementById("max_len").value = defaults.max_len;
   document.getElementById("optimize").checked = defaults.optimize;
   renderReferenceVoices(defaults.reference_voices || []);
 }
@@ -355,14 +414,8 @@ form.addEventListener("submit", async (event) => {
     retry_badcase_ratio_threshold: Number(
       document.getElementById("retry_badcase_ratio_threshold").value
     ),
-    min_len:
-      document.getElementById("min_len").value === ""
-        ? null
-        : Number(document.getElementById("min_len").value),
-    max_len:
-      document.getElementById("max_len").value === ""
-        ? null
-        : Number(document.getElementById("max_len").value),
+    min_len: Number(document.getElementById("min_len").value),
+    max_len: Number(document.getElementById("max_len").value),
     optimize: document.getElementById("optimize").checked,
   };
   payload.voice_description = buildVoiceDescription(payload);
@@ -370,8 +423,9 @@ form.addEventListener("submit", async (event) => {
     referenceVoices.find((item) => item.voice_id === payload.reference_voice_id)
       ?.label || "";
 
-  if (!payload.text) {
-    setStatus("error", "Text is required.");
+  const validationError = validatePayload(payload);
+  if (validationError) {
+    setStatus("error", validationError);
     return;
   }
 
@@ -405,6 +459,10 @@ form.addEventListener("submit", async (event) => {
     );
     await loadHistory();
   } catch (error) {
+    const run = pendingRuns.get(pendingId);
+    if (run) {
+      run.error = error.message;
+    }
     markPendingRun(pendingId, "failed");
     setStatus("error", error.message);
   } finally {

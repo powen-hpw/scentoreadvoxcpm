@@ -401,6 +401,15 @@ button:disabled {
   background: rgba(112, 91, 76, 0.08);
 }
 
+.error-row {
+  background: rgba(158, 43, 37, 0.12);
+}
+
+.error-row strong,
+.error-row span {
+  color: var(--error);
+}
+
 .live-status {
   margin-top: 12px;
   display: flex;
