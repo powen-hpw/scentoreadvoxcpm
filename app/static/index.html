@@ -102,6 +102,46 @@
               </label>
             </div>
 
+            <div class="voice-panel">
+              <div class="voice-panel-heading">
+                <h3>Reference Voice / 參考聲音</h3>
+                <p>上傳 3 到 5 個你喜歡的 WAV，之後每次可以固定選同一個參考聲線。</p>
+              </div>
+
+              <label class="field">
+                <span>Upload Reference WAV / 上傳參考音檔</span>
+                <input id="reference_voice_file" name="reference_voice_file" type="file" accept=".wav,audio/wav" />
+              </label>
+
+              <label class="field">
+                <span>Reference Label / 參考名稱</span>
+                <input
+                  id="reference_voice_label"
+                  name="reference_voice_label"
+                  type="text"
+                  placeholder="例如：warm grandma 01"
+                />
+                <small class="field-help">
+                  建議上傳 5 到 15 秒、單人、乾淨、情緒穩定的音檔。
+                </small>
+              </label>
+
+              <div class="inline-actions">
+                <button id="upload-reference-button" type="button" class="secondary-button">Upload Reference / 上傳參考音</button>
+              </div>
+
+              <label class="field">
+                <span>Selected Reference / 本次使用參考聲音</span>
+                <select id="reference_voice_id" name="reference_voice_id">
+                  <option value="">不使用 reference</option>
+                </select>
+              </label>
+
+              <div id="reference-voice-library" class="reference-list empty-state">
+                尚未上傳 reference voice。
+              </div>
+            </div>
+
             <div class="grid">
               <label class="field">
                 <span>Device / 執行裝置</span>
@@ -154,6 +194,55 @@
                 </small>
               </label>
             </div>
+
+            <details class="advanced-panel">
+              <summary>Advanced / 進階參數</summary>
+              <div class="grid advanced-grid">
+                <label class="field checkbox-field compact-checkbox">
+                  <input id="normalize" name="normalize" type="checkbox" />
+                  <span>Normalize / 文字正規化</span>
+                  <small class="field-help checkbox-help">
+                    展開數字、日期等。遇到時間或數字較多時可開。
+                  </small>
+                </label>
+
+                <label class="field checkbox-field compact-checkbox">
+                  <input id="denoise" name="denoise" type="checkbox" />
+                  <span>Denoise / 參考音降噪</span>
+                  <small class="field-help checkbox-help">
+                    只對 reference audio 有幫助。音檔乾淨時通常建議關。
+                  </small>
+                </label>
+
+                <label class="field checkbox-field compact-checkbox">
+                  <input id="retry_badcase" name="retry_badcase" type="checkbox" />
+                  <span>Retry Badcase / 異常重試</span>
+                  <small class="field-help checkbox-help">
+                    遇到過短或過長輸出時自動重試，建議保持開啟。
+                  </small>
+                </label>
+
+                <label class="field">
+                  <span>Retry Max Times / 最大重試次數</span>
+                  <input id="retry_badcase_max_times" name="retry_badcase_max_times" type="number" min="0" max="10" step="1" />
+                </label>
+
+                <label class="field">
+                  <span>Retry Ratio Threshold / 長度判定比率</span>
+                  <input id="retry_badcase_ratio_threshold" name="retry_badcase_ratio_threshold" type="number" min="1" max="20" step="0.1" />
+                </label>
+
+                <label class="field">
+                  <span>Min Len / 最短 token 長度</span>
+                  <input id="min_len" name="min_len" type="number" min="1" max="10000" step="1" placeholder="留空使用預設" />
+                </label>
+
+                <label class="field">
+                  <span>Max Len / 最長 token 長度</span>
+                  <input id="max_len" name="max_len" type="number" min="1" max="10000" step="1" placeholder="留空使用預設" />
+                </label>
+              </div>
+            </details>
 
             <div class="actions">
               <button id="generate-button" type="submit">Generate WAV / 產生音檔</button>

@@ -2,11 +2,16 @@ const form = document.getElementById("generate-form");
 const statusCard = document.getElementById("status-card");
 const statusText = document.getElementById("status-text");
 const generateButton = document.getElementById("generate-button");
+const uploadReferenceButton = document.getElementById("upload-reference-button");
 const historyList = document.getElementById("history-list");
 const historyEmpty = document.getElementById("history-empty");
+const referenceVoiceLibrary = document.getElementById(
+  "reference-voice-library"
+);
 const template = document.getElementById("history-item-template");
 const pendingRuns = new Map();
 let lastHistoryItems = [];
+let referenceVoices = [];
 
 function setStatus(kind, message) {
   statusCard.className = `status-card ${kind}`;
@@ -21,7 +26,15 @@ function formatMs(value) {
 function createTimingRow(name, value) {
   const row = document.createElement("div");
   row.className = "timing-row";
-  row.innerHTML = `<span>${name}</span><strong>${formatMs(value)}</strong>`;
+  let displayValue = "n/a";
+  if (value !== null && value !== undefined) {
+    if (typeof value === "number" && name.endsWith("_ms")) {
+      displayValue = formatMs(value);
+    } else {
+      displayValue = String(value);
+    }
+  }
+  row.innerHTML = `<span>${name}</span><strong>${displayValue}</strong>`;
   return row;
 }
 
@@ -39,11 +52,20 @@ function buildHistoryNode(item) {
     voicePill.textContent = `voice: ${item.voice_description}`;
     pills.appendChild(voicePill);
   }
+  if (item.reference_voice_label) {
+    const referencePill = document.createElement("span");
+    referencePill.className = "pill reference-pill";
+    referencePill.textContent = `reference: ${item.reference_voice_label}`;
+    pills.appendChild(referencePill);
+  }
 
   [
     `device: ${item.parameters.device}`,
     `cfg: ${item.parameters.cfg_value}`,
     `steps: ${item.parameters.inference_timesteps}`,
+    `normalize: ${item.parameters.normalize}`,
+    `denoise: ${item.parameters.denoise}`,
+    `retry: ${item.parameters.retry_badcase}`,
     `optimize: ${item.parameters.optimize}`,
     `total: ${formatMs(item.timings_ms.total_ms)}`,
   ].forEach((label) => {
@@ -66,6 +88,13 @@ function buildHistoryNode(item) {
     ["generate_ms", item.timings_ms.generate_ms],
     ["write_wav_ms", item.timings_ms.write_wav_ms],
     ["total_ms", item.timings_ms.total_ms],
+    ["retry_badcase_max_times", item.parameters.retry_badcase_max_times],
+    [
+      "retry_ratio_threshold",
+      item.parameters.retry_badcase_ratio_threshold,
+    ],
+    ["min_len", item.parameters.min_len],
+    ["max_len", item.parameters.max_len],
   ].forEach(([name, value]) => timingGrid.appendChild(createTimingRow(name, value)));
 
   const liveStatus = fragment.querySelector(".live-status");
@@ -88,11 +117,20 @@ function buildPendingNode(run) {
     voicePill.textContent = `voice: ${run.payload.voice_description}`;
     pills.appendChild(voicePill);
   }
+  if (run.payload.reference_voice_label) {
+    const referencePill = document.createElement("span");
+    referencePill.className = "pill reference-pill";
+    referencePill.textContent = `reference: ${run.payload.reference_voice_label}`;
+    pills.appendChild(referencePill);
+  }
 
   [
     `device: ${run.payload.device}`,
     `cfg: ${run.payload.cfg_value}`,
     `steps: ${run.payload.inference_timesteps}`,
+    `normalize: ${run.payload.normalize}`,
+    `denoise: ${run.payload.denoise}`,
+    `retry: ${run.payload.retry_badcase}`,
     `optimize: ${run.payload.optimize}`,
   ].forEach((label) => {
     const pill = document.createElement("span");
@@ -182,6 +220,45 @@ function buildVoiceDescription(payload) {
     .join(", ");
 }
 
+function renderReferenceVoices(items) {
+  referenceVoices = items;
+  const select = document.getElementById("reference_voice_id");
+  const currentValue = select.value;
+  select.innerHTML = '<option value="">不使用 reference</option>';
+
+  for (const item of items) {
+    const option = document.createElement("option");
+    option.value = item.voice_id;
+    option.textContent = `${item.label} (${(item.file_size_bytes / 1024 / 1024).toFixed(1)} MB)`;
+    select.appendChild(option);
+  }
+  select.value = items.some((item) => item.voice_id === currentValue)
+    ? currentValue
+    : "";
+
+  if (!items.length) {
+    referenceVoiceLibrary.className = "reference-list empty-state";
+    referenceVoiceLibrary.textContent = "尚未上傳 reference voice。";
+    return;
+  }
+
+  referenceVoiceLibrary.className = "reference-list";
+  referenceVoiceLibrary.innerHTML = "";
+  for (const item of items) {
+    const card = document.createElement("article");
+    card.className = "reference-card";
+    card.innerHTML = `
+      <div class="reference-card-header">
+        <strong>${item.label}</strong>
+        <span>${(item.file_size_bytes / 1024 / 1024).toFixed(1)} MB</span>
+      </div>
+      <p class="reference-meta">${item.created_at}</p>
+      <audio controls preload="metadata" src="${item.audio_url}"></audio>
+    `;
+    referenceVoiceLibrary.appendChild(card);
+  }
+}
+
 async function loadDefaults() {
   const response = await fetch("/api/defaults");
   const defaults = await response.json();
@@ -195,7 +272,17 @@ async function loadDefaults() {
   document.getElementById("cfg_value").value = defaults.cfg_value;
   document.getElementById("inference_timesteps").value =
     defaults.inference_timesteps;
+  document.getElementById("normalize").checked = defaults.normalize;
+  document.getElementById("denoise").checked = defaults.denoise;
+  document.getElementById("retry_badcase").checked = defaults.retry_badcase;
+  document.getElementById("retry_badcase_max_times").value =
+    defaults.retry_badcase_max_times;
+  document.getElementById("retry_badcase_ratio_threshold").value =
+    defaults.retry_badcase_ratio_threshold;
+  document.getElementById("min_len").value = defaults.min_len ?? "";
+  document.getElementById("max_len").value = defaults.max_len ?? "";
   document.getElementById("optimize").checked = defaults.optimize;
+  renderReferenceVoices(defaults.reference_voices || []);
 }
 
 async function loadHistory() {
@@ -203,6 +290,45 @@ async function loadHistory() {
   const payload = await response.json();
   renderHistory(payload.items);
 }
+
+async function uploadReferenceVoice() {
+  const fileInput = document.getElementById("reference_voice_file");
+  const labelInput = document.getElementById("reference_voice_label");
+  const selectedFile = fileInput.files?.[0];
+  if (!selectedFile) {
+    setStatus("error", "Please choose a WAV file before uploading.");
+    return;
+  }
+
+  uploadReferenceButton.disabled = true;
+  const formData = new FormData();
+  formData.append("file", selectedFile);
+  formData.append("label", labelInput.value.trim());
+
+  try {
+    const response = await fetch("/api/reference-voices", {
+      method: "POST",
+      body: formData,
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "Reference upload failed.");
+    }
+    renderReferenceVoices(payload.items || []);
+    document.getElementById("reference_voice_id").value = payload.item.voice_id;
+    fileInput.value = "";
+    labelInput.value = "";
+    setStatus("success", `Uploaded reference voice: ${payload.item.label}`);
+  } catch (error) {
+    setStatus("error", error.message);
+  } finally {
+    uploadReferenceButton.disabled = false;
+  }
+}
+
+uploadReferenceButton.addEventListener("click", () => {
+  uploadReferenceVoice().catch((error) => setStatus("error", error.message));
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -214,14 +340,35 @@ form.addEventListener("submit", async (event) => {
     voice_tone: document.getElementById("voice_tone").value,
     voice_pace: document.getElementById("voice_pace").value,
     voice_extra: document.getElementById("voice_extra").value.trim(),
+    reference_voice_id: document.getElementById("reference_voice_id").value,
     device: document.getElementById("device").value,
     cfg_value: Number(document.getElementById("cfg_value").value),
     inference_timesteps: Number(
       document.getElementById("inference_timesteps").value
     ),
+    normalize: document.getElementById("normalize").checked,
+    denoise: document.getElementById("denoise").checked,
+    retry_badcase: document.getElementById("retry_badcase").checked,
+    retry_badcase_max_times: Number(
+      document.getElementById("retry_badcase_max_times").value
+    ),
+    retry_badcase_ratio_threshold: Number(
+      document.getElementById("retry_badcase_ratio_threshold").value
+    ),
+    min_len:
+      document.getElementById("min_len").value === ""
+        ? null
+        : Number(document.getElementById("min_len").value),
+    max_len:
+      document.getElementById("max_len").value === ""
+        ? null
+        : Number(document.getElementById("max_len").value),
     optimize: document.getElementById("optimize").checked,
   };
   payload.voice_description = buildVoiceDescription(payload);
+  payload.reference_voice_label =
+    referenceVoices.find((item) => item.voice_id === payload.reference_voice_id)
+      ?.label || "";
 
   if (!payload.text) {
     setStatus("error", "Text is required.");

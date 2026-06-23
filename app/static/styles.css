@@ -308,6 +308,74 @@ button:disabled {
   color: var(--success);
 }
 
+.reference-pill {
+  background: rgba(42, 92, 152, 0.12);
+  color: #24548f;
+}
+
+.inline-actions {
+  margin: 0 0 16px;
+}
+
+.secondary-button {
+  width: auto;
+  padding: 10px 16px;
+  background: rgba(126, 51, 24, 0.1);
+  color: var(--accent-strong);
+  border: 1px solid rgba(126, 51, 24, 0.14);
+}
+
+.reference-list {
+  display: grid;
+  gap: 12px;
+}
+
+.reference-card {
+  border: 1px solid rgba(88, 61, 41, 0.12);
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.reference-card audio {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.reference-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reference-meta {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.advanced-panel {
+  margin-top: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(88, 61, 41, 0.12);
+  background: rgba(112, 91, 76, 0.06);
+  padding: 14px 16px;
+}
+
+.advanced-panel summary {
+  cursor: pointer;
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.advanced-grid {
+  margin-top: 16px;
+}
+
+.compact-checkbox {
+  padding-top: 0;
+}
+
 .audio-player {
   width: 100%;
   margin-bottom: 14px;

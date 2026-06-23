@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import soundfile as sf
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,14 +31,18 @@ LOG_DIR = Path(os.environ.get("VOXCPM_LOG_DIR", ROOT_DIR / "request_logs")).expa
 STATIC_DIR = Path(
     os.environ.get("VOXCPM_STATIC_DIR", ROOT_DIR / "app" / "static")
 ).expanduser()
+REFERENCE_VOICE_DIR = Path(
+    os.environ.get("VOXCPM_REFERENCE_VOICE_DIR", ROOT_DIR / "reference_voices")
+).expanduser()
 DEFAULT_TEXT = os.environ.get(
     "VOXCPM_DEFAULT_TEXT",
     "今仔日天氣真好，咱來講一个故事。",
 )
 DEFAULT_DEVICE = os.environ.get("VOXCPM_DEFAULT_DEVICE", "auto")
+MAX_REFERENCE_VOICES = 5
 
 
-for directory in (OUTPUT_DIR, LOG_DIR, STATIC_DIR):
+for directory in (OUTPUT_DIR, LOG_DIR, STATIC_DIR, REFERENCE_VOICE_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 
@@ -60,10 +64,29 @@ class GenerateRequest(BaseModel):
     voice_tone: str = Field(default="", max_length=120)
     voice_pace: str = Field(default="", max_length=80)
     voice_extra: str = Field(default="", max_length=240)
+    reference_voice_id: str = Field(default="", max_length=200)
     device: str = Field(default=DEFAULT_DEVICE, pattern="^(auto|mps|cpu|cuda)$")
     cfg_value: float = Field(default=2.0, ge=0.1, le=10.0)
     inference_timesteps: int = Field(default=10, ge=1, le=200)
+    normalize: bool = Field(default=False)
+    denoise: bool = Field(default=False)
+    retry_badcase: bool = Field(default=True)
+    retry_badcase_max_times: int = Field(default=3, ge=0, le=10)
+    retry_badcase_ratio_threshold: float = Field(default=6.0, ge=1.0, le=20.0)
+    min_len: int | None = Field(default=None, ge=1, le=10000)
+    max_len: int | None = Field(default=None, ge=1, le=10000)
     optimize: bool = Field(default=False)
+
+
+class ReferenceVoiceInfo(BaseModel):
+    """Stored reference voice metadata exposed to the UI."""
+
+    voice_id: str
+    label: str
+    filename: str
+    file_size_bytes: int
+    created_at: str
+    audio_url: str
 
 
 class GenerateResponse(BaseModel):
@@ -143,6 +166,56 @@ def read_history(limit: int = 20) -> list[dict[str, Any]]:
     return logs
 
 
+def slugify_label(value: str) -> str:
+    """Create a stable filesystem-friendly slug."""
+
+    cleaned = "".join(
+        ch.lower() if ch.isalnum() else "-" for ch in value.strip()
+    ).strip("-")
+    compact = "-".join(part for part in cleaned.split("-") if part)
+    return compact or "reference-voice"
+
+
+def list_reference_voices() -> list[ReferenceVoiceInfo]:
+    """Return stored reference voices sorted newest first."""
+
+    items: list[ReferenceVoiceInfo] = []
+    for path in sorted(REFERENCE_VOICE_DIR.glob("*.wav"), key=lambda p: p.stat().st_mtime, reverse=True):
+        voice_id = path.stem
+        stat = path.stat()
+        metadata_path = path.with_suffix(".json")
+        label = voice_id.split("--", 1)[1].replace("-", " ")
+        if metadata_path.exists():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                label = metadata.get("label", label)
+            except json.JSONDecodeError:
+                pass
+        items.append(
+            ReferenceVoiceInfo(
+                voice_id=voice_id,
+                label=label,
+                filename=path.name,
+                file_size_bytes=stat.st_size,
+                created_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                audio_url=f"/reference_voices/{path.name}",
+            )
+        )
+    return items
+
+
+def resolve_reference_voice(voice_id: str) -> tuple[str | None, str | None]:
+    """Resolve a selected reference voice id to path and label."""
+
+    if not voice_id:
+        return None, None
+    path = REFERENCE_VOICE_DIR / f"{voice_id}.wav"
+    if not path.exists():
+        raise HTTPException(status_code=400, detail=f"Unknown reference voice: {voice_id}")
+    label = next((item.label for item in list_reference_voices() if item.voice_id == voice_id), voice_id)
+    return str(path), label
+
+
 workbench = VoxWorkbench()
 app = FastAPI(title="VoxCPM Workbench")
 app.add_middleware(
@@ -154,6 +227,7 @@ app.add_middleware(
 
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 app.mount("/request_logs", StaticFiles(directory=str(LOG_DIR)), name="request_logs")
+app.mount("/reference_voices", StaticFiles(directory=str(REFERENCE_VOICE_DIR)), name="reference_voices")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -182,16 +256,71 @@ def defaults() -> dict[str, Any]:
         "voice_tone": "",
         "voice_pace": "",
         "voice_extra": "",
+        "reference_voice_id": "",
         "device": DEFAULT_DEVICE,
         "cfg_value": 2.0,
         "inference_timesteps": 10,
+        "normalize": False,
+        "denoise": False,
+        "retry_badcase": True,
+        "retry_badcase_max_times": 3,
+        "retry_badcase_ratio_threshold": 6.0,
+        "min_len": None,
+        "max_len": None,
         "optimize": False,
         "model_path": str(MODEL_DIR),
+        "reference_voices": [item.model_dump() for item in list_reference_voices()],
         "notes": [
             "First request on a new device/optimize combination is usually slower.",
             "When cold_start is true, internal warm-up is included in generate_ms.",
         ],
     }
+
+
+@app.get("/api/reference-voices")
+def reference_voices() -> dict[str, Any]:
+    """Return available reference voice files for the UI."""
+
+    return {"items": [item.model_dump() for item in list_reference_voices()]}
+
+
+@app.post("/api/reference-voices")
+async def upload_reference_voice(
+    file: UploadFile = File(...),
+    label: str = Form(default=""),
+) -> dict[str, Any]:
+    """Upload and store one reference voice WAV file."""
+
+    existing = list_reference_voices()
+    if len(existing) >= MAX_REFERENCE_VOICES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Reference voice limit reached ({MAX_REFERENCE_VOICES}). Delete an old one before uploading a new file.",
+        )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".wav"}:
+        raise HTTPException(status_code=400, detail="Only .wav files are supported for reference voices.")
+
+    requested_label = (label or Path(file.filename or "reference-voice").stem).strip()
+    voice_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}--{slugify_label(requested_label)}"
+    destination = REFERENCE_VOICE_DIR / f"{voice_id}.wav"
+    contents = await file.read()
+    destination.write_bytes(contents)
+    destination.with_suffix(".json").write_text(
+        json.dumps({"label": requested_label}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    item = ReferenceVoiceInfo(
+        voice_id=voice_id,
+        label=requested_label,
+        filename=destination.name,
+        file_size_bytes=destination.stat().st_size,
+        created_at=datetime.fromtimestamp(destination.stat().st_mtime, tz=timezone.utc).isoformat(),
+        audio_url=f"/reference_voices/{destination.name}",
+    )
+    return {"item": item.model_dump(), "items": [voice.model_dump() for voice in list_reference_voices()]}
 
 
 @app.post("/api/generate", response_model=GenerateResponse)
@@ -205,6 +334,7 @@ def generate(payload: GenerateRequest) -> GenerateResponse:
     request_started = time.perf_counter()
     request_received_at = utc_now()
     voice_description = build_voice_description(payload)
+    reference_wav_path, reference_voice_label = resolve_reference_voice(payload.reference_voice_id)
     effective_text = (
         f"({voice_description}){payload.text}" if voice_description else payload.text
     )
@@ -232,8 +362,16 @@ def generate(payload: GenerateRequest) -> GenerateResponse:
     try:
         wav = model_handle.model.generate(
             text=effective_text,
+            reference_wav_path=reference_wav_path,
             cfg_value=payload.cfg_value,
             inference_timesteps=payload.inference_timesteps,
+            normalize=payload.normalize,
+            denoise=payload.denoise,
+            retry_badcase=payload.retry_badcase,
+            retry_badcase_max_times=payload.retry_badcase_max_times,
+            retry_badcase_ratio_threshold=payload.retry_badcase_ratio_threshold,
+            min_len=payload.min_len,
+            max_len=payload.max_len,
         )
     except Exception as exc:
         error_log = {
@@ -243,6 +381,8 @@ def generate(payload: GenerateRequest) -> GenerateResponse:
             "error": str(exc),
             "parameters": payload.model_dump(),
             "voice_description": voice_description,
+            "reference_voice_label": reference_voice_label,
+            "reference_wav_path": reference_wav_path,
             "effective_text": effective_text,
             "cold_start": cold_start,
             "model_cache_created_at": model_handle.created_at,
@@ -279,6 +419,8 @@ def generate(payload: GenerateRequest) -> GenerateResponse:
         "success": True,
         "parameters": payload.model_dump(),
         "voice_description": voice_description,
+        "reference_voice_label": reference_voice_label,
+        "reference_wav_path": reference_wav_path,
         "effective_text": effective_text,
         "audio_file": audio_path.name,
         "audio_url": f"/output/{audio_path.name}",
