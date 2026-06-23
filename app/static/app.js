@@ -77,10 +77,22 @@ function buildHistoryNode(item) {
   });
 
   const player = fragment.querySelector(".audio-player");
-  player.src = item.audio_url;
+  if (item.audio_url) {
+    player.src = item.audio_url;
+    player.style.display = "";
+  } else {
+    player.removeAttribute("src");
+    player.style.display = "none";
+  }
 
   const logLink = fragment.querySelector(".log-link");
-  logLink.href = item.log_url;
+  if (item.log_url) {
+    logLink.href = item.log_url;
+    logLink.textContent = "View Log";
+  } else {
+    logLink.removeAttribute("href");
+    logLink.textContent = "No Log File";
+  }
 
   const timingGrid = fragment.querySelector(".timing-grid");
   [
