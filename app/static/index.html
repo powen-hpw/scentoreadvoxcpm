@@ -157,6 +157,17 @@
 
             <div class="grid">
               <label class="field">
+                <span>Output Mode / 輸出模式</span>
+                <select id="output_mode" name="output_mode">
+                  <option value="full">整句一次輸出</option>
+                  <option value="segmented">分段輸出後合併</option>
+                </select>
+                <small class="field-help">
+                  `分段輸出` 會用相同參數逐段生成，再合併成一個完整 WAV。
+                </small>
+              </label>
+
+              <label class="field">
                 <span>Device / 執行裝置</span>
                 <select id="device" name="device">
                   <option value="auto">auto</option>

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +48,7 @@ DEFAULT_RETRY_BADCASE_MAX_TIMES = 3
 DEFAULT_RETRY_BADCASE_RATIO_THRESHOLD = 6.0
 DEFAULT_MIN_LEN = 1
 DEFAULT_MAX_LEN = 4096
+DEFAULT_OUTPUT_MODE = "full"
 
 PARAMETER_LIMITS = {
     "cfg_value": {
@@ -117,6 +119,7 @@ class GenerateRequest(BaseModel):
     voice_pace: str = Field(default="", max_length=80)
     voice_extra: str = Field(default="", max_length=240)
     reference_voice_id: str = Field(default="", max_length=200)
+    output_mode: str = Field(default=DEFAULT_OUTPUT_MODE, pattern="^(full|segmented)$")
     device: str = Field(default=DEFAULT_DEVICE, pattern="^(auto|mps|cpu|cuda)$")
     cfg_value: float = Field(default=DEFAULT_CFG_VALUE, ge=0.1, le=10.0)
     inference_timesteps: int = Field(default=DEFAULT_INFERENCE_TIMESTEPS, ge=1, le=200)
@@ -205,6 +208,47 @@ def build_voice_description(payload: GenerateRequest) -> str:
         payload.voice_extra.strip(),
     ]
     return ", ".join(part for part in parts if part)
+
+
+def split_text_for_segmented_tts(text: str) -> list[str]:
+    """Split text into medium-length chunks for segmented generation."""
+
+    text = text.strip()
+    if not text:
+        return []
+
+    primary_breaks = "。！？；"
+    secondary_breaks = "，、"
+    chunks: list[str] = []
+    current = ""
+
+    def flush(force: bool = False) -> None:
+        nonlocal current
+        candidate = current.strip()
+        if candidate and (force or len(candidate) >= 10):
+            chunks.append(candidate)
+            current = ""
+
+    for char in text:
+        current += char
+        if char in primary_breaks:
+            flush(force=True)
+        elif char in secondary_breaks and len(current.strip()) >= 18:
+            flush(force=True)
+
+    if current.strip():
+        if chunks and len(current.strip()) < 10:
+            chunks[-1] = f"{chunks[-1]}{current.strip()}"
+        else:
+            chunks.append(current.strip())
+
+    merged: list[str] = []
+    for chunk in chunks:
+        if merged and len(chunk) < 10:
+            merged[-1] = f"{merged[-1]}{chunk}"
+        else:
+            merged.append(chunk)
+    return merged
 
 
 def read_history(limit: int = 20) -> list[dict[str, Any]]:
@@ -359,6 +403,7 @@ def defaults() -> dict[str, Any]:
         "voice_pace": "",
         "voice_extra": "",
         "reference_voice_id": "",
+        "output_mode": DEFAULT_OUTPUT_MODE,
         "device": DEFAULT_DEVICE,
         "cfg_value": DEFAULT_CFG_VALUE,
         "inference_timesteps": DEFAULT_INFERENCE_TIMESTEPS,
@@ -476,6 +521,11 @@ def generate(payload: GenerateRequest) -> GenerateResponse:
     effective_text = (
         f"({voice_description}){payload.text}" if voice_description else payload.text
     )
+    text_segments = (
+        split_text_for_segmented_tts(payload.text)
+        if payload.output_mode == "segmented"
+        else [payload.text]
+    )
 
     timings: dict[str, float] = {}
     phases: list[dict[str, Any]] = []
@@ -498,18 +548,37 @@ def generate(payload: GenerateRequest) -> GenerateResponse:
 
     generate_phase_started = time.perf_counter()
     try:
-        wav = model_handle.model.generate(
-            text=effective_text,
-            reference_wav_path=reference_wav_path,
-            cfg_value=payload.cfg_value,
-            inference_timesteps=payload.inference_timesteps,
-            normalize=payload.normalize,
-            denoise=payload.denoise,
-            retry_badcase=payload.retry_badcase,
-            retry_badcase_max_times=payload.retry_badcase_max_times,
-            retry_badcase_ratio_threshold=payload.retry_badcase_ratio_threshold,
-            min_len=payload.min_len,
-            max_len=payload.max_len,
+        segment_wavs: list[np.ndarray] = []
+        segment_logs: list[dict[str, Any]] = []
+        for index, segment_text in enumerate(text_segments, start=1):
+            effective_segment_text = (
+                f"({voice_description}){segment_text}" if voice_description else segment_text
+            )
+            segment_wav = model_handle.model.generate(
+                text=effective_segment_text,
+                reference_wav_path=reference_wav_path,
+                cfg_value=payload.cfg_value,
+                inference_timesteps=payload.inference_timesteps,
+                normalize=payload.normalize,
+                denoise=payload.denoise,
+                retry_badcase=payload.retry_badcase,
+                retry_badcase_max_times=payload.retry_badcase_max_times,
+                retry_badcase_ratio_threshold=payload.retry_badcase_ratio_threshold,
+                min_len=payload.min_len,
+                max_len=payload.max_len,
+            )
+            segment_wavs.append(np.asarray(segment_wav))
+            segment_logs.append(
+                {
+                    "index": index,
+                    "text": segment_text,
+                    "effective_text": effective_segment_text,
+                }
+            )
+        wav = (
+            np.concatenate(segment_wavs)
+            if len(segment_wavs) > 1
+            else segment_wavs[0]
         )
     except Exception as exc:
         error_log = {
@@ -521,6 +590,9 @@ def generate(payload: GenerateRequest) -> GenerateResponse:
             "voice_description": voice_description,
             "reference_voice_label": reference_voice_label,
             "reference_wav_path": reference_wav_path,
+            "output_mode": payload.output_mode,
+            "segment_count": len(text_segments),
+            "segments": text_segments,
             "effective_text": effective_text,
             "cold_start": cold_start,
             "model_cache_created_at": model_handle.created_at,
@@ -540,6 +612,8 @@ def generate(payload: GenerateRequest) -> GenerateResponse:
             "name": "generate",
             "elapsed_ms": timings["generate_ms"],
             "note": "Includes VoxCPM internal warm-up when cold_start is true.",
+            "output_mode": payload.output_mode,
+            "segment_count": len(text_segments),
         }
     )
 
@@ -559,6 +633,9 @@ def generate(payload: GenerateRequest) -> GenerateResponse:
         "voice_description": voice_description,
         "reference_voice_label": reference_voice_label,
         "reference_wav_path": reference_wav_path,
+        "output_mode": payload.output_mode,
+        "segment_count": len(text_segments),
+        "segments": segment_logs,
         "effective_text": effective_text,
         "audio_file": audio_path.name,
         "audio_url": f"/output/{audio_path.name}",

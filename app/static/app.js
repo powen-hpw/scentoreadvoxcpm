@@ -48,6 +48,7 @@ function buildRunSummary(parameters, referenceVoiceLabel) {
   const denoiseStatus = parameters.denoise ? "denoise: on" : "denoise: off";
   return [
     referenceStatus,
+    `mode: ${parameters.output_mode}`,
     `device: ${parameters.device}`,
     `cfg: ${parameters.cfg_value}`,
     `steps: ${parameters.inference_timesteps}`,
@@ -82,6 +83,7 @@ function buildHistoryNode(item) {
   [
     `optimize: ${item.parameters.optimize}`,
     `total: ${formatMs(item.timings_ms.total_ms)}`,
+    `segments: ${item.segment_count || 1}`,
   ].forEach((label) => {
     const pill = document.createElement("span");
     pill.className = "pill";
@@ -163,7 +165,10 @@ function buildPendingNode(run) {
     pills.appendChild(referencePill);
   }
 
-  [`optimize: ${run.payload.optimize}`].forEach((label) => {
+  [
+    `optimize: ${run.payload.optimize}`,
+    `segments: ${run.payload.output_mode === "segmented" ? "auto" : 1}`,
+  ].forEach((label) => {
     const pill = document.createElement("span");
     pill.className = "pill";
     pill.textContent = label;
@@ -405,6 +410,7 @@ async function loadDefaults() {
   document.getElementById("voice_tone").value = defaults.voice_tone;
   document.getElementById("voice_pace").value = defaults.voice_pace;
   document.getElementById("voice_extra").value = defaults.voice_extra;
+  document.getElementById("output_mode").value = defaults.output_mode;
   document.getElementById("device").value = defaults.device;
   applyNumberConstraints("cfg_value", parameterLimits.cfg_value);
   document.getElementById("cfg_value").value = defaults.cfg_value;
@@ -493,6 +499,7 @@ form.addEventListener("submit", async (event) => {
     voice_pace: document.getElementById("voice_pace").value,
     voice_extra: document.getElementById("voice_extra").value.trim(),
     reference_voice_id: document.getElementById("reference_voice_id").value,
+    output_mode: document.getElementById("output_mode").value,
     device: document.getElementById("device").value,
     cfg_value: Number(document.getElementById("cfg_value").value),
     inference_timesteps: Number(
