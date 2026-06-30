@@ -296,10 +296,71 @@ function renderReferenceVoices(items) {
         <span>${(item.file_size_bytes / 1024 / 1024).toFixed(1)} MB</span>
       </div>
       <p class="reference-meta">${item.created_at}</p>
+      <label class="field reference-inline-field">
+        <span>Label / 名稱</span>
+        <input type="text" class="reference-label-input" value="${item.label}" />
+      </label>
+      <label class="field reference-inline-field">
+        <span>Note / 註解</span>
+        <textarea class="reference-note-input" rows="3" placeholder="可手動輸入用途、特色、口音提醒">${item.note || ""}</textarea>
+      </label>
       <audio controls preload="metadata" src="${item.audio_url}"></audio>
+      <div class="reference-actions">
+        <button type="button" class="secondary-button reference-save-button" data-voice-id="${item.voice_id}">Save / 儲存</button>
+        <button type="button" class="danger-button reference-delete-button" data-voice-id="${item.voice_id}">Delete / 刪除</button>
+      </div>
     `;
+    const saveButton = card.querySelector(".reference-save-button");
+    const deleteButton = card.querySelector(".reference-delete-button");
+    const labelInput = card.querySelector(".reference-label-input");
+    const noteInput = card.querySelector(".reference-note-input");
+    saveButton.addEventListener("click", async () => {
+      try {
+        await updateReferenceVoice(item.voice_id, labelInput.value, noteInput.value);
+      } catch (error) {
+        setStatus("error", error.message);
+      }
+    });
+    deleteButton.addEventListener("click", async () => {
+      try {
+        await deleteReferenceVoice(item.voice_id);
+      } catch (error) {
+        setStatus("error", error.message);
+      }
+    });
     referenceVoiceLibrary.appendChild(card);
   }
+}
+
+async function updateReferenceVoice(voiceId, label, note) {
+  const formData = new FormData();
+  formData.append("label", label.trim());
+  formData.append("note", note.trim());
+  const response = await fetch(`/api/reference-voices/${voiceId}`, {
+    method: "PUT",
+    body: formData,
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.detail || "Reference update failed.");
+  }
+  renderReferenceVoices(payload.items || []);
+  setStatus("success", `Updated reference voice: ${payload.item.label}`);
+}
+
+async function deleteReferenceVoice(voiceId) {
+  const response = await fetch(`/api/reference-voices/${voiceId}`, {
+    method: "DELETE",
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.detail || "Reference delete failed.");
+  }
+  renderReferenceVoices(payload.items || []);
+  if (document.getElementById("reference_voice_id").value === voiceId) {
+    document.getElementById("reference_voice_id").value = "";
+  }
+  setStatus("success", "Deleted reference voice.");
 }
 
 function applyNumberConstraints(fieldId, spec) {
@@ -382,6 +443,7 @@ async function loadHistory() {
 async function uploadReferenceVoice() {
   const fileInput = document.getElementById("reference_voice_file");
   const labelInput = document.getElementById("reference_voice_label");
+  const noteInput = document.getElementById("reference_voice_note");
   const selectedFile = fileInput.files?.[0];
   if (!selectedFile) {
     setStatus("error", "Please choose a WAV file before uploading.");
@@ -392,6 +454,7 @@ async function uploadReferenceVoice() {
   const formData = new FormData();
   formData.append("file", selectedFile);
   formData.append("label", labelInput.value.trim());
+  formData.append("note", noteInput.value.trim());
 
   try {
     const response = await fetch("/api/reference-voices", {
@@ -406,6 +469,7 @@ async function uploadReferenceVoice() {
     document.getElementById("reference_voice_id").value = payload.item.voice_id;
     fileInput.value = "";
     labelInput.value = "";
+    noteInput.value = "";
     setStatus("success", `Uploaded reference voice: ${payload.item.label}`);
   } catch (error) {
     setStatus("error", error.message);

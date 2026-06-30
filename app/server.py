@@ -135,6 +135,7 @@ class ReferenceVoiceInfo(BaseModel):
 
     voice_id: str
     label: str
+    note: str
     filename: str
     file_size_bytes: int
     created_at: str
@@ -228,6 +229,33 @@ def slugify_label(value: str) -> str:
     return compact or "reference-voice"
 
 
+def reference_voice_metadata_path(voice_id: str) -> Path:
+    """Return the sidecar metadata path for one reference voice."""
+
+    return REFERENCE_VOICE_DIR / f"{voice_id}.json"
+
+
+def read_reference_voice_metadata(voice_id: str) -> dict[str, Any]:
+    """Load reference voice metadata if present."""
+
+    metadata_path = reference_voice_metadata_path(voice_id)
+    if not metadata_path.exists():
+        return {}
+    try:
+        return json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def write_reference_voice_metadata(voice_id: str, *, label: str, note: str) -> None:
+    """Persist editable metadata for a reference voice."""
+
+    reference_voice_metadata_path(voice_id).write_text(
+        json.dumps({"label": label, "note": note}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def list_reference_voices() -> list[ReferenceVoiceInfo]:
     """Return stored reference voices sorted newest first."""
 
@@ -235,18 +263,15 @@ def list_reference_voices() -> list[ReferenceVoiceInfo]:
     for path in sorted(REFERENCE_VOICE_DIR.glob("*.wav"), key=lambda p: p.stat().st_mtime, reverse=True):
         voice_id = path.stem
         stat = path.stat()
-        metadata_path = path.with_suffix(".json")
         label = voice_id.split("--", 1)[1].replace("-", " ")
-        if metadata_path.exists():
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                label = metadata.get("label", label)
-            except json.JSONDecodeError:
-                pass
+        metadata = read_reference_voice_metadata(voice_id)
+        label = metadata.get("label", label)
+        note = metadata.get("note", "")
         items.append(
             ReferenceVoiceInfo(
                 voice_id=voice_id,
                 label=label,
+                note=note,
                 filename=path.name,
                 file_size_bytes=stat.st_size,
                 created_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
@@ -266,6 +291,19 @@ def resolve_reference_voice(voice_id: str) -> tuple[str | None, str | None]:
         raise HTTPException(status_code=400, detail=f"Unknown reference voice: {voice_id}")
     label = next((item.label for item in list_reference_voices() if item.voice_id == voice_id), voice_id)
     return str(path), label
+
+
+def get_reference_voice_or_404(voice_id: str) -> tuple[Path, dict[str, Any]]:
+    """Return the voice wav path and current metadata."""
+
+    path = REFERENCE_VOICE_DIR / f"{voice_id}.wav"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Unknown reference voice: {voice_id}")
+    metadata = read_reference_voice_metadata(voice_id)
+    default_label = voice_id.split("--", 1)[1].replace("-", " ")
+    metadata.setdefault("label", default_label)
+    metadata.setdefault("note", "")
+    return path, metadata
 
 
 def sanitize_payload(payload: GenerateRequest) -> GenerateRequest:
@@ -353,6 +391,7 @@ def reference_voices() -> dict[str, Any]:
 async def upload_reference_voice(
     file: UploadFile = File(...),
     label: str = Form(default=""),
+    note: str = Form(default=""),
 ) -> dict[str, Any]:
     """Upload and store one reference voice WAV file."""
 
@@ -372,20 +411,52 @@ async def upload_reference_voice(
     destination = REFERENCE_VOICE_DIR / f"{voice_id}.wav"
     contents = await file.read()
     destination.write_bytes(contents)
-    destination.with_suffix(".json").write_text(
-        json.dumps({"label": requested_label}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    write_reference_voice_metadata(
+        voice_id,
+        label=requested_label,
+        note=note.strip(),
     )
 
     item = ReferenceVoiceInfo(
         voice_id=voice_id,
         label=requested_label,
+        note=note.strip(),
         filename=destination.name,
         file_size_bytes=destination.stat().st_size,
         created_at=datetime.fromtimestamp(destination.stat().st_mtime, tz=timezone.utc).isoformat(),
         audio_url=f"/reference_voices/{destination.name}",
     )
     return {"item": item.model_dump(), "items": [voice.model_dump() for voice in list_reference_voices()]}
+
+
+@app.put("/api/reference-voices/{voice_id}")
+async def update_reference_voice(
+    voice_id: str,
+    label: str = Form(...),
+    note: str = Form(default=""),
+) -> dict[str, Any]:
+    """Update one reference voice label and note."""
+
+    _, metadata = get_reference_voice_or_404(voice_id)
+    next_label = label.strip() or metadata["label"]
+    next_note = note.strip()
+    write_reference_voice_metadata(voice_id, label=next_label, note=next_note)
+    item = next((voice for voice in list_reference_voices() if voice.voice_id == voice_id), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"Unknown reference voice: {voice_id}")
+    return {"item": item.model_dump(), "items": [voice.model_dump() for voice in list_reference_voices()]}
+
+
+@app.delete("/api/reference-voices/{voice_id}")
+def delete_reference_voice(voice_id: str) -> dict[str, Any]:
+    """Delete one reference voice wav and metadata."""
+
+    path, _ = get_reference_voice_or_404(voice_id)
+    metadata_path = reference_voice_metadata_path(voice_id)
+    path.unlink(missing_ok=False)
+    if metadata_path.exists():
+        metadata_path.unlink()
+    return {"deleted_voice_id": voice_id, "items": [voice.model_dump() for voice in list_reference_voices()]}
 
 
 @app.post("/api/generate", response_model=GenerateResponse)
