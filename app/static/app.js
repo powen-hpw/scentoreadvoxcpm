@@ -39,6 +39,25 @@ function createTimingRow(name, value) {
   return row;
 }
 
+function buildRunSummary(parameters, referenceVoiceLabel) {
+  const referenceStatus = referenceVoiceLabel
+    ? `reference: on (${referenceVoiceLabel})`
+    : "reference: off";
+  const retryStatus = parameters.retry_badcase ? "retry: on" : "retry: off";
+  const normalizeStatus = parameters.normalize ? "normalize: on" : "normalize: off";
+  const denoiseStatus = parameters.denoise ? "denoise: on" : "denoise: off";
+  return [
+    referenceStatus,
+    `device: ${parameters.device}`,
+    `cfg: ${parameters.cfg_value}`,
+    `steps: ${parameters.inference_timesteps}`,
+    retryStatus,
+    normalizeStatus,
+    denoiseStatus,
+    `len: ${parameters.min_len}-${parameters.max_len}`,
+  ].join(" · ");
+}
+
 function buildHistoryNode(item) {
   const fragment = template.content.cloneNode(true);
   fragment.querySelector(".history-title").textContent = item.request_id;
@@ -61,12 +80,6 @@ function buildHistoryNode(item) {
   }
 
   [
-    `device: ${item.parameters.device}`,
-    `cfg: ${item.parameters.cfg_value}`,
-    `steps: ${item.parameters.inference_timesteps}`,
-    `normalize: ${item.parameters.normalize}`,
-    `denoise: ${item.parameters.denoise}`,
-    `retry: ${item.parameters.retry_badcase}`,
     `optimize: ${item.parameters.optimize}`,
     `total: ${formatMs(item.timings_ms.total_ms)}`,
   ].forEach((label) => {
@@ -75,6 +88,12 @@ function buildHistoryNode(item) {
     pill.textContent = label;
     pills.appendChild(pill);
   });
+
+  const runSummary = fragment.querySelector(".run-summary");
+  runSummary.textContent = buildRunSummary(
+    item.parameters,
+    item.reference_voice_label
+  );
 
   const player = fragment.querySelector(".audio-player");
   if (item.audio_url) {
@@ -144,20 +163,18 @@ function buildPendingNode(run) {
     pills.appendChild(referencePill);
   }
 
-  [
-    `device: ${run.payload.device}`,
-    `cfg: ${run.payload.cfg_value}`,
-    `steps: ${run.payload.inference_timesteps}`,
-    `normalize: ${run.payload.normalize}`,
-    `denoise: ${run.payload.denoise}`,
-    `retry: ${run.payload.retry_badcase}`,
-    `optimize: ${run.payload.optimize}`,
-  ].forEach((label) => {
+  [`optimize: ${run.payload.optimize}`].forEach((label) => {
     const pill = document.createElement("span");
     pill.className = "pill";
     pill.textContent = label;
     pills.appendChild(pill);
   });
+
+  const runSummary = fragment.querySelector(".run-summary");
+  runSummary.textContent = buildRunSummary(
+    run.payload,
+    run.payload.reference_voice_label
+  );
 
   const player = fragment.querySelector(".audio-player");
   player.style.display = "none";
